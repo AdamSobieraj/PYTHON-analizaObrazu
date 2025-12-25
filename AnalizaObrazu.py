@@ -40,7 +40,7 @@ MIN_ASPECT_RATIO = 1.5
 
 if not os.path.exists(OUTPUT_FOLDER):
     os.makedirs(OUTPUT_FOLDER)
-
+# zamiast na czen i biel to hsv
 
 def show_step(title, image, x_pos=0, y_pos=0):
 
@@ -69,9 +69,19 @@ def process_and_show(filepath, filename):
         # --- ETAP 1: Oryginał ---
     show_step("1. Oryginal", image, 0, 0)
 
-    # --- ETAP 2: Skala szarości ---
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    show_step("2. Szarosc", gray, PREVIEW_WIDTH + 10, 0)
+    # # --- ETAP 2: Skala szarości ---
+    # gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # show_step("2. Szarosc", gray, PREVIEW_WIDTH + 10, 0)
+
+    # --- ETAP 2: HSV -> Kanał Value (ZMIANA TUTAJ) ---
+    # Konwertujemy BGR na HSV
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    # Rozdzielamy kanały: H (Barwa), S (Nasycenie), V (Jasność)
+    h, s, v = cv2.split(hsv)
+    # Używamy tylko kanału V (Value) jako naszej "szarości".
+    # V to czysta intensywność światła.
+    gray = v
+    show_step("2. HSV - Kanal V (Jasnosc)", gray, PREVIEW_WIDTH + 10, 0)
 
     # --- ETAP 3: Gradient (Sobel X - Y) ---
     gradX = cv2.Sobel(gray, ddepth=cv2.CV_32F, dx=1, dy=0, ksize=-1)
@@ -85,15 +95,27 @@ def process_and_show(filepath, filename):
     (_, thresh) = cv2.threshold(blurred, THRESH_VALUE, 255, cv2.THRESH_BINARY)
     show_step("4. Binaryzacja", thresh, 0, 350)
 
-    # --- ETAP 5: Morfologia ---
+    # # --- ETAP 5: Morfologia --- powinno byc open - close pogrubia
+    # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, MORPH_KERNEL_SIZE)
+    # closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel) # najpierw otwarcie (czyli zrobi erozje i tylatacje)
+    # closed = cv2.erode(closed, None, iterations=ITERATIONS)
+    # closed = cv2.dilate(closed, None, iterations=ITERATIONS)
+    # data = closed.copy
+    # show_step("5. Morfologia", closed, PREVIEW_WIDTH + 10, 350)
+
+    # --- ETAP 5: Morfologia (OTWARCIE) ---
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, MORPH_KERNEL_SIZE)
-    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    closed = cv2.erode(closed, None, iterations=ITERATIONS)
-    closed = cv2.dilate(closed, None, iterations=ITERATIONS)
-    show_step("5. Morfologia", closed, PREVIEW_WIDTH + 10, 350)
+    # ZMIANA: Zastosowanie MORPH_OPEN (Erozja -> Dylatacja)
+    # Służy do usuwania szumu z tła (małych kropek).
+    morphed = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+    # Dodatkowe czyszczenie (Erozja i Dylatacja)
+    morphed = cv2.erode(morphed, None, iterations=ITERATIONS)
+    morphed = cv2.dilate(morphed, None, iterations=ITERATIONS)
+    data = morphed.copy()
+    show_step("5. Morfologia (OPEN)", morphed, PREVIEW_WIDTH + 10, 350)
 
     # --- ETAP 6: Wynik (Kontury) ---
-    cnts, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts, _ = cv2.findContours(data, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     output_image = image.copy()
     count = 0
 
