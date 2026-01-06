@@ -12,38 +12,44 @@ PREVIEW_WIDTH = 400  # Szerokość okienka podglądu (w pikselach)
 # Określa, jak bardzo "czarne" muszą być paski, by zostały wykryte.
 # Zakres 0-255. Wyższa wartość (np. 230) wykryje tylko idealny kontrast.
 # Niższa (np. 180) wykryje też kody w cieniu, ale może łapać szum.
-THRESH_VALUE = 225
+# [POPRAWKA]: Używamy flagi cv2.THRESH_OTSU, która ignoruje tę wartość
+# i dobiera idealny próg dynamicznie.
+THRESH_VALUE = 200
 
 # 3. PARAMETRY ROZMYCIA (BLUR)
 # Pomaga usunąć szum przed binaryzacją.
 # Musi być liczbą nieparzystą, np. (9, 9), (5, 5).
-BLUR_KERNEL_SIZE = (9, 9)
+BLUR_KERNEL_SIZE = (3, 3)
 
 # 4. PARAMETRY MORFOLOGII (ZLEWANIE PASKÓW)
 # Kształt prostokąta używany do łączenia pionowych pasków w jedną plamę.
 # (Szerokość, Wysokość). Musi być szeroki, żeby łączyć paski w poziomie.
-MORPH_KERNEL_SIZE = (21, 7)
+MORPH_KERNEL_SIZE = (9, 3)
+
+# [NOWA OPCJA] Wybór metody morfologicznej:
+# True  = ZAMYKANIE (CLOSE) -> Dylatacja potem Erozja. Zalecane do łączenia pasków kodu w jeden blok.
+# False = OTWIERANIE (OPEN) -> Erozja potem Dylatacja. Służy do usuwania szumu (kropek), ale może "pociąć" kod.
+USE_MORPH_CLOSE = True
 
 # Liczba powtórzeń czyszczenia (erozji/dylatacji).
 # Więcej iteracji = gładsze bloki, ale mniejsze kody mogą zniknąć.
-ITERATIONS = 4
+ITERATIONS = 1
 
 # 5. FILTROWANIE WYNIKÓW
 # Minimalna powierzchnia (w pikselach), aby uznać obiekt za kod.
 # Zmniejsz, jeśli kody są daleko/małe. Zwiększ, jeśli wykrywa śmieci.
-MIN_AREA = 2000
+MIN_AREA = 1500
 
 # Minimalna proporcja (Szerokość / Wysokość).
 # Kody są zazwyczaj szersze niż wyższe. Wartość 1.5 oznacza, że
 # szerokość musi być min. 1.5x większa od wysokości.
-MIN_ASPECT_RATIO = 1.5
+MIN_ASPECT_RATIO = 2.5
 
 if not os.path.exists(OUTPUT_FOLDER):
     os.makedirs(OUTPUT_FOLDER)
-# zamiast na czen i biel to hsv
+
 
 def show_step(title, image, x_pos=0, y_pos=0):
-
     # Wyświetla obraz w przeskalowanym oknie
     h, w = image.shape[:2]
 
@@ -66,56 +72,57 @@ def process_and_show(filepath, filename):
         print("Błąd pliku.")
         return True
 
-        # --- ETAP 1: Oryginał ---
+    # --- ETAP 1: Oryginał ---
     show_step("1. Oryginal", image, 0, 0)
 
-    # # --- ETAP 2: Skala szarości ---
-    # gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # show_step("2. Szarosc", gray, PREVIEW_WIDTH + 10, 0)
-
-    # --- ETAP 2: HSV -> Kanał Value (ZMIANA TUTAJ) ---
+    # --- ETAP 2: HSV -> Kanał Value ---
     # Konwertujemy BGR na HSV
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     # Rozdzielamy kanały: H (Barwa), S (Nasycenie), V (Jasność)
     h, s, v = cv2.split(hsv)
     # Używamy tylko kanału V (Value) jako naszej "szarości".
-    # V to czysta intensywność światła.
     gray = v
     show_step("2. HSV - Kanal V (Jasnosc)", gray, PREVIEW_WIDTH + 10, 0)
 
     # --- ETAP 3: Gradient (Sobel X - Y) ---
     gradX = cv2.Sobel(gray, ddepth=cv2.CV_32F, dx=1, dy=0, ksize=-1)
-    gradY = cv2.Sobel(gray, ddepth=cv2.CV_32F, dx=0, dy=1, ksize=-1)
-    gradient = cv2.subtract(gradX, gradY)
-    gradient = cv2.convertScaleAbs(gradient)
+    gradient = cv2.convertScaleAbs(gradX)
     show_step("3. Gradient", gradient, (PREVIEW_WIDTH * 2) + 20, 0)
 
     # --- ETAP 4: Binaryzacja ---
     blurred = cv2.blur(gradient, BLUR_KERNEL_SIZE)
-    (_, thresh) = cv2.threshold(blurred, THRESH_VALUE, 255, cv2.THRESH_BINARY)
-    show_step("4. Binaryzacja", thresh, 0, 350)
 
-    # # --- ETAP 5: Morfologia --- powinno byc open - close pogrubia
-    # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, MORPH_KERNEL_SIZE)
-    # closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel) # najpierw otwarcie (czyli zrobi erozje i tylatacje)
-    # closed = cv2.erode(closed, None, iterations=ITERATIONS)
-    # closed = cv2.dilate(closed, None, iterations=ITERATIONS)
-    # data = closed.copy
-    # show_step("5. Morfologia", closed, PREVIEW_WIDTH + 10, 350)
+    # [POPRAWKA] Używamy OTSU dla automatycznego progu
+    (_, thresh) = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
 
-    # --- ETAP 5: Morfologia (OTWARCIE) ---
+    show_step("4. Binaryzacja (Otsu)", thresh, 0, 350)
+
+    # --- ETAP 5: Morfologia ---
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, MORPH_KERNEL_SIZE)
-    # ZMIANA: Zastosowanie MORPH_OPEN (Erozja -> Dylatacja)
-    # Służy do usuwania szumu z tła (małych kropek).
-    morphed = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+
+    # [NOWA LOGIKA] Wybór metody na podstawie zmiennej USE_MORPH_CLOSE
+    if USE_MORPH_CLOSE:
+        # ZAMYKANIE (CLOSE): Wypełnia dziury między paskami
+        morphed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        method_name = "CLOSE"
+    else:
+        # OTWIERANIE (OPEN): Usuwa małe śmieci z tła
+        morphed = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        method_name = "OPEN"
+
     # Dodatkowe czyszczenie (Erozja i Dylatacja)
     morphed = cv2.erode(morphed, None, iterations=ITERATIONS)
     morphed = cv2.dilate(morphed, None, iterations=ITERATIONS)
+
     data = morphed.copy()
-    show_step("5. Morfologia (OPEN)", morphed, PREVIEW_WIDTH + 10, 350)
+    show_step(f"5. Morfologia ({method_name})", morphed, PREVIEW_WIDTH + 10, 350)
 
     # --- ETAP 6: Wynik (Kontury) ---
     cnts, _ = cv2.findContours(data, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Sortowanie konturów od największego
+    cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
+
     output_image = image.copy()
     count = 0
 
@@ -127,7 +134,13 @@ def process_and_show(filepath, filename):
         # Użycie parametrów konfiguracyjnych do filtrowania
         if area > MIN_AREA and ar > MIN_ASPECT_RATIO:
             cv2.rectangle(output_image, (x, y), (x + w, y + h), (0, 255, 0), 3)
+
+            # Dodatek: wyświetlanie pola powierzchni
+            cv2.putText(output_image, f"Area: {int(area)}", (x, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             count += 1
+
+            # break # Odkomentuj, jeśli chcesz tylko 1 (największy) kod
 
     show_step("6. Wynik", output_image, (PREVIEW_WIDTH * 2) + 20, 350)
 
