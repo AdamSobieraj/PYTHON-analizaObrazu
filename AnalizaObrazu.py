@@ -6,6 +6,7 @@ import glob
 # 1. PARAMETRY OBRAZU I PODGLĄDU
 INPUT_FOLDER = 'zdjecia_wejsciowe'
 OUTPUT_FOLDER = 'wyniki_kodow'
+FRAGMENTS_FOLDER = 'wycinki_kodow'  # [NOWE] Folder na wycięte fragmenty kodów
 PREVIEW_WIDTH = 400  # Szerokość okienka podglądu (w pikselach)
 
 # 2. PARAMETRY PROGOWANIA (THRESHOLD)
@@ -14,7 +15,7 @@ PREVIEW_WIDTH = 400  # Szerokość okienka podglądu (w pikselach)
 # Niższa (np. 180) wykryje też kody w cieniu, ale może łapać szum.
 # [POPRAWKA]: Używamy flagi cv2.THRESH_OTSU, która ignoruje tę wartość
 # i dobiera idealny próg dynamicznie.
-THRESH_VALUE = 200
+THRESH_VALUE = 100
 
 # 3. PARAMETRY ROZMYCIA (BLUR)
 # Pomaga usunąć szum przed binaryzacją.
@@ -29,7 +30,7 @@ MORPH_KERNEL_SIZE = (9, 3)
 # [NOWA OPCJA] Wybór metody morfologicznej:
 # True  = ZAMYKANIE (CLOSE) -> Dylatacja potem Erozja. Zalecane do łączenia pasków kodu w jeden blok.
 # False = OTWIERANIE (OPEN) -> Erozja potem Dylatacja. Służy do usuwania szumu (kropek), ale może "pociąć" kod.
-USE_MORPH_CLOSE = True
+USE_MORPH_CLOSE = False
 
 # Liczba powtórzeń czyszczenia (erozji/dylatacji).
 # Więcej iteracji = gładsze bloki, ale mniejsze kody mogą zniknąć.
@@ -45,8 +46,12 @@ MIN_AREA = 1500
 # szerokość musi być min. 1.5x większa od wysokości.
 MIN_ASPECT_RATIO = 2.5
 
+# Tworzenie folderów wyjściowych jeśli nie istnieją
 if not os.path.exists(OUTPUT_FOLDER):
     os.makedirs(OUTPUT_FOLDER)
+
+if not os.path.exists(FRAGMENTS_FOLDER):
+    os.makedirs(FRAGMENTS_FOLDER)
 
 
 def show_step(title, image, x_pos=0, y_pos=0):
@@ -92,7 +97,7 @@ def process_and_show(filepath, filename):
     # --- ETAP 4: Binaryzacja ---
     blurred = cv2.blur(gradient, BLUR_KERNEL_SIZE)
 
-    # [POPRAWKA] Używamy OTSU dla automatycznego progu
+    # Używamy OTSU dla automatycznego progu
     (_, thresh) = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
 
     show_step("4. Binaryzacja (Otsu)", thresh, 0, 350)
@@ -100,7 +105,7 @@ def process_and_show(filepath, filename):
     # --- ETAP 5: Morfologia ---
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, MORPH_KERNEL_SIZE)
 
-    # [NOWA LOGIKA] Wybór metody na podstawie zmiennej USE_MORPH_CLOSE
+    # Wybór metody na podstawie zmiennej USE_MORPH_CLOSE
     if USE_MORPH_CLOSE:
         # ZAMYKANIE (CLOSE): Wypełnia dziury między paskami
         morphed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
@@ -133,20 +138,34 @@ def process_and_show(filepath, filename):
 
         # Użycie parametrów konfiguracyjnych do filtrowania
         if area > MIN_AREA and ar > MIN_ASPECT_RATIO:
+            # Rysowanie ramki na obrazie wynikowym
             cv2.rectangle(output_image, (x, y), (x + w, y + h), (0, 255, 0), 3)
 
             # Dodatek: wyświetlanie pola powierzchni
             cv2.putText(output_image, f"Area: {int(area)}", (x, y - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+            # --- ETAP 7: Fragmentacja (Zapis wycinków) ---
+            # Wycinamy fragment z oryginalnego zdjęcia (ROI - Region of Interest)
+            # image[y_start:y_end, x_start:x_end]
+            roi = image[y:y + h, x:x + w]
+
+            # Generowanie nazwy pliku dla wycinka
+            frag_filename = f"wycinek_{count}_{filename}"
+            frag_path = os.path.join(FRAGMENTS_FOLDER, frag_filename)
+
+            # Zapis wycinka
+            cv2.imwrite(frag_path, roi)
+
             count += 1
 
             # break # Odkomentuj, jeśli chcesz tylko 1 (największy) kod
 
     show_step("6. Wynik", output_image, (PREVIEW_WIDTH * 2) + 20, 350)
 
-    # Zapis wyniku na dysk
+    # Zapis wyniku na dysk (całe zdjęcie z ramkami)
     cv2.imwrite(os.path.join(OUTPUT_FOLDER, "processed_" + filename), output_image)
-    print(f" -> Znaleziono kodów: {count}. (SPACJA - dalej, Q - wyjście)")
+    print(f" -> Znaleziono kodów: {count} (zapisano wycinki). (SPACJA - dalej, Q - wyjście)")
 
     # Oczekiwanie na klawisz
     key = cv2.waitKey(0) & 0xFF
