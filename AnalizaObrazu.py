@@ -15,7 +15,7 @@ PREVIEW_WIDTH = 400  # Szerokość okienka podglądu (w pikselach)
 # Niższa (np. 180) wykryje też kody w cieniu, ale może łapać szum.
 # [POPRAWKA]: Używamy flagi cv2.THRESH_OTSU, która ignoruje tę wartość
 # i dobiera idealny próg dynamicznie.
-THRESH_VALUE = 100
+THRESH_VALUE = 200
 
 # 3. PARAMETRY ROZMYCIA (BLUR)
 # Pomaga usunąć szum przed binaryzacją.
